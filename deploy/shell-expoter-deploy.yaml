@@ -35,7 +35,7 @@ spec:
           value: "60"
         - name: RACK_EXECL_PATH
           value: "/tmp"
-        image: 10.29.208.125/daocloud/shell-exporter:v0.19
+        image: shell-exporter:latest
         imagePullPolicy: IfNotPresent
         name: shell-expoter
         resources: {}
