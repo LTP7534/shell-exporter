@@ -8,9 +8,13 @@ LISTEN_PORT  监听端口
 SCRIPTS_PATH 脚本路径
 INTERVAL     脚本执行的时间间隔
 ```
+# 镜像构建
+```shell
+docker build . -t shell-exporter:latest
+```
 
 # 部署
 > 修改deploy下kubernetes yaml的配置，deployment的变量 以及 servicemonitor等。
-```
+```shell
 kubectl apply -f deploy/
 ```

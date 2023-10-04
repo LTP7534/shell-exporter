@@ -2,8 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
   annotations:
-    daocloud.io/component: monitorning
-  creationTimestamp: "2023-09-24T14:16:01Z"
+    kubernetes.io/component: monitorning
   labels:
     app: monitorning-shell-expoter
     app.kubernetes.io/name: monitorning-shell-expoter
