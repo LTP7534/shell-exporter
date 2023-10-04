@@ -1,0 +1,21 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  creationTimestamp: "2023-09-24T14:12:32Z"
+  generation: 1
+  labels:
+    app: monitorning-shell-expoter
+    release: monitorning
+  name: monitorning-shell-expoter
+  namespace: monitorning
+spec:
+  endpoints:
+  - interval: 30s
+    port: metrics
+    scheme: http
+  namespaceSelector:
+    matchNames:
+    - monitorning
+  selector:
+    matchLabels:
+      app: monitorning-shell-expoter
