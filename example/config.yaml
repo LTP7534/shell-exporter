@@ -1,0 +1,16 @@
+shell:
+  - name: test.sh
+    interval: 2s
+    env:
+      - name: TEST_ENV
+        value: test
+      - name: TEST_ENV2
+        value: nolog
+python:
+  - name: host_info.py
+    interval: 30s
+    env:
+      - name: RACK_EXECL_PATH
+        value: /app/vm-centos-data/Code/shell-exporter/example
+
+

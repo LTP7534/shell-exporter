@@ -2,75 +2,198 @@ package main
 
 import (
 	"fmt"
-	"net/http"
-	"os/exec"
+	"regexp"
 	"os"
+	"os/exec"
+	"time"
+	"net/http"
+	"log"
+	"sync"
+	"flag"
+	"gopkg.in/yaml.v3"
 	"strings"
-        "time"
-        "path/filepath"
-        "strconv"
 )
 
-// LISTEN_PORT  监听端口
-// SCRIPTS_PATH 脚本路径
-// INTERVAL     脚本执行的时间间隔
+const defaultInterval = 300 * time.Second
 
-func main() {
-    LISTEN__PORT := os.Getenv("LISTEN_PORT")
-    if LISTEN__PORT == "" {
-        LISTEN__PORT = "9592"
-    }
-    // 启动一个 goroutine 执行子进程任务
-    go executeScriptsEvery10Seconds()
-    fmt.Println("开始监听端口 :"+LISTEN__PORT)
-	http.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		// 在这里运行您的自定义脚本
-		output, err := runCustomScript()
+type EnvVar struct {
+	Name  string `yaml:"name"`
+	Value string `yaml:"value"`
+}
+
+type RawScript struct {
+	Name     string   `yaml:"name"`
+	Interval string   `yaml:"interval"`
+	Env      []EnvVar `yaml:"env"`
+}
+
+var allCollectors []Runner
+var prometheusMetricRegex = regexp.MustCompile(`^([a-zA-Z0-9_])+ *\{(([a-zA-Z0-9_])+ *= *\"[[:alnum:][:punct:][:space:]\x{4e00}-\x{9fff}]+\",?)*\} +[0-9]+(\.[0-9]+)?$|^([a-zA-Z0-9_])+ +[0-9]+(\.[0-9]+)?$` )
+
+// Collector 通用结构
+type Collector struct {
+	Name     string
+	Interval time.Duration
+	Env      []EnvVar
+	Type     string 
+	Output   string
+	mu       sync.RWMutex
+}
+// Runner 接口
+type Runner interface {
+	Run()
+	GetOutput() string
+}
+
+// ShellRunner 实现 Runner
+type ShellRunner struct {
+	// Collector *Collector
+	*Collector
+}
+// PythonRunner 实现 Runner
+type PythonRunner struct {
+	// Collector *Collector
+	*Collector
+}
+// NewCollector 构建函数
+func NewCollector(name string, interval string, env []EnvVar, typ string) (*Collector, error) {
+	var dur time.Duration
+	var err error
+	if interval == "" {
+		dur = defaultInterval
+	} else {
+		dur, err = time.ParseDuration(interval)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Error running script: %v", err), http.StatusInternalServerError)
-			return
+			return nil, fmt.Errorf("invalid interval for %s: %v", name, err)
 		}
-
-		// 将脚本输出转换成 Prometheus 指标格式
-		metrics := convertToPrometheusMetrics(output)
-
-		// 将指标写入 HTTP 响应
-		for _, metric := range metrics {
-			fmt.Fprintf(w, "%s\n", metric)
-		}
-	})
-
-	// 启动 HTTP 服务器，监听端口
-	//http.ListenAndServe(LISTEN__PORT, nil)
-	err := http.ListenAndServe(":" + LISTEN__PORT, nil)
-	if err != nil {
-		fmt.Printf("启动服务器失败：%s\n", err)
 	}
+	return &Collector{
+		Name:     name,
+		Interval: dur,
+		Env:      env,
+		Type:     typ,
+	}, nil
+}
+func (c *Collector) SetOutput(output string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Output = output
+  }
+func (c *Collector) GetOutput() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Output
+  }
+
+// 判断文件是否存在
+func fileExists(path string) bool {
+    _, err := os.Stat(path)
+    if err == nil {
+        return true // 文件存在
+    }
+    if os.IsNotExist(err) {
+        return false // 文件不存在
+    }
+    // 其他错误，例如权限错误等
+    return false
 }
 
-func runCustomScript() (string, error) {
-        filename := "/usr/share/result_shell_exporter.txt"
-
-        fileInfo, err := os.Stat(filename)
-
-        if fileInfo.Size() == 0 {
-            time.Sleep(2 * time.Second) // 等待2秒
-        }
-	// 在这里运行您的自定义脚本，并返回其输出
-        cmd := exec.Command("sh","shell/out_put.sh")
-        output, err := cmd.CombinedOutput()
-        if err != nil {
-                fmt.Printf("Error: does not comply with the prometheus metrics specification - %s\n", string(output))
-                return "", err
-        }
-	return string(output), nil
+func (s *ShellRunner) Run() {
+	fmt.Printf("[ShellRunner] Executing %s every %s\n", s.Name, s.Interval)
+	ticker := time.NewTicker(s.Interval)
+	if ! fileExists(s.Name){
+		fmt.Printf("File %s does not exist\n", s.Name)
+		return
+	}
+	go func() {
+		for range ticker.C {
+			cmd := exec.Command("sh", s.Name)
+			if len(s.Env) > 0 {
+				for _, e := range s.Env {
+					cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", e.Name, e.Value))
+				}
+			}
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				fmt.Sprintf("ERROR: %v\nOUTPUT:\n%s", err, output)
+			  } else {
+				s.SetOutput(string(output))
+			  }
+		}
+	}()
 }
 
+
+func (p *PythonRunner) Run() {
+	fmt.Printf("[PythonRunner] Executing %s every %s\n", p.Name, p.Interval)
+	ticker := time.NewTicker(p.Interval)
+	if ! fileExists(p.Name) {
+		fmt.Printf("File %s does not exist\n", p.Name)
+		return
+	}
+	go func() {
+		for range ticker.C {
+			cmd := exec.Command("python", p.Name)
+			if len(p.Env) > 0 {
+				for _, e := range p.Env {
+					cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", e.Name, e.Value))
+				}
+			}
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				fmt.Sprintf("ERROR: %v\nOUTPUT:\n%s", err, output)
+			  } else {
+				p.SetOutput(string(output))
+			  }
+		}
+	}()
+}
+
+// 加载 config.yaml
+func LoadConfig(path string) ([]Runner, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var raw map[string][]RawScript
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+
+	var runners []Runner
+	for typ, scripts := range raw {
+		if len(scripts) == 0 {
+			continue // skip empty types
+		}
+		for _, script := range scripts {
+			c, err := NewCollector(script.Name, script.Interval, script.Env, typ)
+			if err != nil {
+				return nil, err
+			}
+			switch typ {
+			case "shell":
+				runners = append(runners, &ShellRunner{Collector: c})
+			case "python":
+				runners = append(runners, &PythonRunner{Collector: c})
+			default:
+				fmt.Printf("Unsupported type: %s\n", typ)
+			}
+		}
+	}
+	return runners, nil
+}
 func convertToPrometheusMetrics(output string) []string {
-	// 将脚本输出转换成 Prometheus 指标格式
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	var metrics []string
 	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		if ! prometheusMetricRegex.MatchString(line) {
+			log.Printf("invalid Prometheus metric line: %q", line)
+			continue
+		}
 		parts := strings.Split(line, " ")
 		if len(parts) != 2 {
 			continue
@@ -84,91 +207,30 @@ func convertToPrometheusMetrics(output string) []string {
 	return metrics
 }
 
-// 判断文件名是否以 "." 开头的隐藏文件
-func isHidden(filename string) bool {
-	if len(filename) > 0 && filename[0] == '.' {
-		return true
+func main() {
+	config := flag.String("config", "example/config.yaml", "path of the config file")
+	webListenAdderss := flag.String("web.listen-adderss", ":8080", "address to listen on for web interface and telemetry")
+	flag.Parse()
+	runners, err := LoadConfig(config)
+	if err != nil {
+		panic(err)
 	}
-	return false
-}
-
-// 执行自定义脚本
-func executeScriptsEvery10Seconds() {
-        SCRIPTS__PATH := os.Getenv("SCRIPTS_PATH")
-        if SCRIPTS__PATH == "" {
-           SCRIPTS__PATH = "/scripts"
-        }
-	intervalStr := os.Getenv("INTERVAL")
-	// 如果 INTERVAL 环境变量未设置或为空，则使用默认值 300
-	Interval := 300
-	if intervalStr != "" {
-		// 将环境变量的值转换为整数
-		interval, err := strconv.Atoi(intervalStr)
-		if err == nil {
-			Interval = interval
-		} else {
-			fmt.Printf("无法解析 INTERVAL 的值：%v\n", err)
-		}
+	for _, runner := range runners {
+		runner.Run()
+		allCollectors = append(allCollectors, runner)
 	}
-	// 脚本目录路径
-	scriptDir := SCRIPTS__PATH
-	fmt.Printf("开始执行%s下脚本,重复间隔%v秒.\n\n", SCRIPTS__PATH, Interval)
-       	filePath := "/usr/share/result_shell_exporter.txt"
-	// 循环执行任务
-	for {
-                currentTime := time.Now()
-                format := "2006-01-02 15:04:05.999"
-                formattedTime := currentTime.Format(format)
-		// 创建文件保存输出
-		outputFile, err := os.Create(filePath)
-		if err != nil {
-			fmt.Printf("创建文件失败：%v\n", err)
-			return
+	http.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		for _, c := range allCollectors {
+			// if c.GetOutput() != "" {
+			    metrics := convertToPrometheusMetrics(c.GetOutput())
+			    for _, metric := range metrics {
+			        fmt.Fprintf(w, "%s\n", metric)
+			    }
+		    //    io.WriteString(w, fmt.Sprintf("%s",  c.GetOutput()))
+			// }
 		}
-
-		// 遍历脚本目录下的 .sh 文件
-		err = filepath.Walk(scriptDir, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-                       	if info.IsDir() && path != scriptDir {
-		  	        return filepath.SkipDir
-		        }
-			if !isHidden(info.Name()){
-                            ext := filepath.Ext(path)
-                            if ext == ".sh"{
-				// 执行 .sh 脚本文件
-				fmt.Printf("[%v] 执行脚本: %s\n", formattedTime, path)
-                                cmd := exec.Command("sh",path)
-				cmd.Stdin = os.Stdin
-				// cmd.Stdout = os.Stdout
-                                cmd.Stdout = outputFile
-				cmd.Stderr = os.Stderr
-				err := cmd.Run()
-				if err != nil {
-					fmt.Printf("脚本执行出错：%v\n", err)
-				}
-                            } else if ext == ".py"{
-                                // 执行 .py 脚本文件
-                                fmt.Printf("[%v] 执行脚本: %s\n", formattedTime, path)
-                                cmd := exec.Command("python",path)
-                                cmd.Stdin = os.Stdin
-                                // cmd.Stdout = os.Stdout
-                                cmd.Stdout = outputFile
-                                cmd.Stderr = os.Stderr
-                                err := cmd.Run()
-                                if err != nil {
-                                        fmt.Printf("脚本执行出错：%v\n", err)
-                                }
-                            }
-			}
-			return nil
-		})
-
-		if err != nil {
-			fmt.Printf("遍历脚本目录出错：%v\n", err)
-		}
-		// 等待 10 秒后再次执行
-		time.Sleep(time.Duration(Interval) * time.Second)
-	}
+	  })
+	
+	  log.Println("HTTP server running on :8080")
+	  log.Fatal(http.ListenAndServe(webListenAdderss, nil))
 }
