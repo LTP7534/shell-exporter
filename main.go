@@ -106,13 +106,13 @@ func fileExists(path string) bool {
 
 func (s *ShellRunner) Run() {
 	fmt.Printf("[ShellRunner] Executing %s every %s\n", s.Name, s.Interval)
-	ticker := time.NewTicker(s.Interval)
+	// ticker := time.NewTicker(s.Interval)
 	if !fileExists(s.scriptPath + "/" + s.Name) {
 		fmt.Printf("File %s does not exist\n", s.Name)
 		return
 	}
 	go func() {
-		for range ticker.C {
+		for {
 			cmd := exec.Command("sh", s.scriptPath+"/"+s.Name)
 			if len(s.Env) > 0 {
 				for _, e := range s.Env {
@@ -125,19 +125,20 @@ func (s *ShellRunner) Run() {
 			} else {
 				s.SetOutput(string(output))
 			}
+			time.Sleep(s.Interval)
 		}
 	}()
 }
 
 func (p *PythonRunner) Run() {
 	fmt.Printf("[PythonRunner] Executing %s every %s\n", p.Name, p.Interval)
-	ticker := time.NewTicker(p.Interval)
+	// ticker := time.NewTicker(p.Interval)
 	if !fileExists(p.scriptPath + "/" + p.Name) {
 		fmt.Printf("File %s does not exist\n", p.Name)
 		return
 	}
 	go func() {
-		for range ticker.C {
+		for {
 			cmd := exec.Command("python", p.scriptPath+"/"+p.Name)
 			if len(p.Env) > 0 {
 				for _, e := range p.Env {
@@ -150,6 +151,7 @@ func (p *PythonRunner) Run() {
 			} else {
 				p.SetOutput(string(output))
 			}
+			time.Sleep(p.Interval)
 		}
 	}()
 }
