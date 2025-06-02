@@ -1,6 +1,6 @@
 shell:
   - name: test.sh
-    interval: 2s
+    interval: 300s
     env:
       - name: TEST_ENV
         value: test
