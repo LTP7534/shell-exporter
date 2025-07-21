@@ -114,15 +114,32 @@ func (s *ShellRunner) Run() {
 	go func() {
 		for {
 			cmd := exec.Command("sh", s.scriptPath+"/"+s.Name)
-			if len(s.Env) > 0 {
-				for _, e := range s.Env {
-					cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", e.Name, e.Value))
+			// 整合父进程和子进程ENV
+			envMap := make(map[string]string)
+			for _, env := range os.Environ() {
+				parts := strings.SplitN(env, "=", 2)
+				if len(parts) == 2 {
+					envMap[parts[0]] = parts[1]
 				}
 			}
+			// 子进程设置的变量，若和父进程重复则覆盖
+			if len(s.Env) > 0 {
+				for _, e := range s.Env {
+					envMap[e.Name] = e.Value
+				}
+			}
+			finalEnv := make([]string, 0, len(envMap))
+			for key, value := range envMap {
+				finalEnv = append(finalEnv, fmt.Sprintf("%s=%s", key, value))
+			}
+			cmd.Env = finalEnv
+			// 执行脚本
+			fmt.Println("Start to execute script:", s.Name)
 			output, err := cmd.CombinedOutput()
 			if err != nil {
-				fmt.Sprintf("ERROR: %v\nOUTPUT:\n%s", err, output)
+				fmt.Printf("ERROR: %v\nOUTPUT:\n%s", err, string(output))
 			} else {
+				fmt.Println("Success to execute script:", s.Name)
 				s.SetOutput(string(output))
 			}
 			time.Sleep(s.Interval)
@@ -140,15 +157,31 @@ func (p *PythonRunner) Run() {
 	go func() {
 		for {
 			cmd := exec.Command("python", p.scriptPath+"/"+p.Name)
-			if len(p.Env) > 0 {
-				for _, e := range p.Env {
-					cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", e.Name, e.Value))
+			// 整合父进程和子进程ENV
+			envMap := make(map[string]string)
+			for _, env := range os.Environ() {
+				parts := strings.SplitN(env, "=", 2)
+				if len(parts) == 2 {
+					envMap[parts[0]] = parts[1]
 				}
 			}
+			// 子进程设置的变量，若和父进程重复则覆盖
+			if len(p.Env) > 0 {
+				for _, e := range p.Env {
+					envMap[e.Name] = e.Value
+				}
+			}
+			finalEnv := make([]string, 0, len(envMap))
+			for key, value := range envMap {
+				finalEnv = append(finalEnv, fmt.Sprintf("%s=%s", key, value))
+			}
+			cmd.Env = finalEnv
+			fmt.Println("Start to execute script:", p.Name)
 			output, err := cmd.CombinedOutput()
 			if err != nil {
-				fmt.Sprintf("ERROR: %v\nOUTPUT:\n%s", err, output)
+				fmt.Printf("ERROR: %v\nOUTPUT:\n%s", err, string(output))
 			} else {
+				fmt.Println("Success to execute script:", p.Name)
 				p.SetOutput(string(output))
 			}
 			time.Sleep(p.Interval)
@@ -252,6 +285,6 @@ func main() {
 		}
 	})
 
-	log.Println("HTTP server running on %s", *webListenAdderss)
+	log.Printf("HTTP server running on %s\n", *webListenAdderss)
 	log.Fatal(http.ListenAndServe(*webListenAdderss, nil))
 }
