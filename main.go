@@ -72,6 +72,17 @@ func NewCollector(name string, interval string, env []EnvVar, typ string, script
 			return nil, fmt.Errorf("invalid interval for %s: %v", name, err)
 		}
 	}
+	// envMap := make(map[string]string)
+	for _, osenv := range os.Environ() {
+		parts := strings.SplitN(osenv, "=", 2)
+		if len(parts) == 2 {
+			// 将环境变量解析为 EnvVar 并添加到切片中
+			env = append(env, EnvVar{
+				Name:  parts[0],
+				Value: parts[1],
+			})
+		}
+	}
 	return &Collector{
 		Name:       name,
 		Interval:   dur,
